@@ -1,0 +1,155 @@
+======================================================================
+BÁO CÁO CHI TIẾT: CÁC GIẢI THUẬT TÌM KIẾM MÙ (UNINFORMED SEARCH)
+ĐỀ TÀI: VACUUM WORLD (ROBOT HÚT BỤI)
+======================================================================
+
+I. BREADTH-FIRST SEARCH (BFS) - TÌM KIẾM THEO CHIỀU RỘNG
+----------------------------------------------------------------------
+
+1. NGUYÊN LÝ HOẠT ĐỘNG
+   BFS khám phá không gian trạng thái theo từng "lớp" (layer). Từ trạng 
+   thái ban đầu (gốc), thuật toán kiểm tra tất cả các trạng thái có thể 
+   đạt được sau 1 bước đi, sau đó là tất cả các trạng thái sau 2 bước đi, 
+   và cứ thế tiếp tục.
+
+   - Cấu trúc dữ liệu: Hàng đợi (Queue - FIFO: First In First Out).
+   - Chiến lược: Các trạng thái sinh ra trước được kiểm tra trước.
+
+2. MÃ GIẢ (PSEUDOCODE)
+
+   function BFS(initial_state):
+       node = CreateNode(initial_state)
+       if GoalTest(node.state) return node  // Kiểm tra nếu vừa vào đã sạch
+    
+       frontier = Queue()      // Hàng đợi chứa các node cần duyệt
+       frontier.enqueue(node)
+    
+       explored = Set()        // Tập hợp trạng thái đã duyệt (tránh lặp)
+    
+       while not frontier.isEmpty():
+           node = frontier.dequeue() // Lấy node đầu tiên ra
+           explored.add(node.state)
+        
+           for action in Actions(node.state):
+               child = ChildNode(node, action)
+            
+               // Chỉ thêm nếu chưa duyệt và chưa có trong hàng đợi
+               if child.state not in explored and child not in frontier:
+                   if GoalTest(child.state):
+                       return child // TÌM THẤY ĐƯỜNG ĐI
+                   frontier.enqueue(child)
+       return Failure
+
+3. PHÂN TÍCH ĐỘ PHỨC TẠP
+   - b (Hệ số nhánh): Số hành động tối đa tại mỗi bước (Left, Right, Up, Down, Suck).
+   - d (Độ sâu lời giải): Số bước ít nhất để làm sạch hết bụi.
+   
+   - Độ phức tạp thời gian: O(b^d).
+   - Độ phức tạp không gian: O(b^d) (Lưu toàn bộ biên trong bộ nhớ).
+
+4. ĐÁNH GIÁ TRONG VACUUM WORLD
+   - Ưu điểm: Đảm bảo tính TỐI ƯU (Optimal). BFS luôn tìm ra chuỗi hành 
+     động ngắn nhất. Đây là chuẩn mực để so sánh.
+   - Nhược điểm: Tốn bộ nhớ rất lớn. Khi kích thước lưới n tăng, số lượng 
+     trạng thái bùng nổ theo hàm mũ, dễ gây tràn bộ nhớ (Out of Memory).
+
+
+======================================================================
+
+II. DEPTH-FIRST SEARCH (DFS) - TÌM KIẾM THEO CHIỀU SÂU
+----------------------------------------------------------------------
+
+1. NGUYÊN LÝ HOẠT ĐỘNG
+   DFS khám phá một nhánh sâu nhất có thể cho đến khi không đi được nữa 
+   (gặp tường hoặc đạt độ sâu giới hạn) thì mới quay lui (backtrack) để 
+   đi nhánh khác.
+
+   - Cấu trúc dữ liệu: Ngăn xếp (Stack - LIFO: Last In First Out) hoặc Đệ quy.
+   - Chiến lược: Các trạng thái mới sinh ra được ưu tiên kiểm tra ngay.
+
+2. MÃ GIẢ (PSEUDOCODE)
+
+   function DFS(initial_state):
+       node = CreateNode(initial_state)
+       if GoalTest(node.state) return node
+    
+       frontier = Stack()      // Ngăn xếp (LIFO)
+       frontier.push(node)
+    
+       explored = Set()
+    
+       while not frontier.isEmpty():
+           node = frontier.pop() // Lấy node mới nhất vừa thêm vào
+           explored.add(node.state)
+        
+           if GoalTest(node.state): 
+               return node
+            
+           // Duyệt qua các hành động con
+           for action in Actions(node.state):
+               child = ChildNode(node, action)
+               if child.state not in explored and child not in frontier:
+                   frontier.push(child)
+       return Failure
+
+3. PHÂN TÍCH ĐỘ PHỨC TẠP
+   - m (Độ sâu tối đa): Chiều sâu lớn nhất của cây tìm kiếm.
+   
+   - Độ phức tạp thời gian: O(b^m). Rất lâu nếu chọn sai nhánh.
+   - Độ phức tạp không gian: O(b * m). Rất tiết kiệm bộ nhớ (tuyến tính).
+
+4. ĐÁNH GIÁ TRONG VACUUM WORLD
+   - Ưu điểm: Tiết kiệm bộ nhớ vượt trội so với BFS. Phù hợp khi không 
+     gian trạng thái quá lớn.
+   - Nhược điểm: KHÔNG tối ưu. Robot thường đi lòng vòng rất xa mới tìm 
+     được đích. Dễ bị kẹt trong vòng lặp vô tận nếu không xử lý kỹ.
+
+
+======================================================================
+
+III. BẢNG SO SÁNH TỔNG HỢP (BFS vs DFS)
+----------------------------------------------------------------------
+
++----------------------+---------------------------+---------------------------+
+| TIÊU CHÍ             | BFS (CHIỀU RỘNG)          | DFS (CHIỀU SÂU)           |
++----------------------+---------------------------+---------------------------+
+| Cấu trúc dữ liệu     | Hàng đợi (Queue - FIFO)   | Ngăn xếp (Stack - LIFO)   |
++----------------------+---------------------------+---------------------------+
+| Tính đầy đủ          | CÓ (Luôn tìm thấy đích)   | CÓ (Nếu khử được lặp)     |
++----------------------+---------------------------+---------------------------+
+| Tính tối ưu          | CÓ (Đường đi ngắn nhất)   | KHÔNG (Đường đi dài)      |
++----------------------+---------------------------+---------------------------+
+| Thời gian chạy       | Chậm (O(b^d))             | Rất biến động (O(b^m))    |
++----------------------+---------------------------+---------------------------+
+| Bộ nhớ sử dụng       | CAO (Rất tốn kém)         | THẤP (Tiết kiệm)          |
++----------------------+---------------------------+---------------------------+
+| Vai trò trong bài    | Tiêu chuẩn so sánh về     | Tiêu chuẩn so sánh về     |
+| toán                 | độ dài đường đi.          | hiệu quả bộ nhớ.          |
++----------------------+---------------------------+---------------------------+
+
+
+======================================================================
+
+IV. LƯU Ý QUAN TRỌNG KHI CÀI ĐẶT (IMPLEMENTATION NOTE)
+----------------------------------------------------------------------
+
+Khi hiện thực code cho Vacuum World, việc định nghĩa "TRẠNG THÁI" (State) 
+là quan trọng nhất để thuật toán chạy đúng:
+
+1. ĐỊNH NGHĨA SAI: 
+   State = Chỉ có tọa độ Robot (x, y).
+   -> Hậu quả: Robot chỉ tìm cách đi đến một ô nào đó, không quan tâm 
+   đến việc hút bụi.
+
+2. ĐỊNH NGHĨA ĐÚNG: 
+   State = {Tọa độ Robot (x,y) + Danh sách các ô còn bẩn}.
+   
+   -> Ví dụ: 
+      Trạng thái A: Robot tại (1,1), còn 2 cục bụi.
+      Trạng thái B: Robot tại (1,1), còn 0 cục bụi.
+      => A và B là hai trạng thái KHÁC NHAU.
+   
+   -> Khi kiểm tra tập "Explored" (Đã duyệt): Phải so sánh cả vị trí 
+      lẫn tình trạng bụi. Robot được phép quay lại ô cũ NẾU trước đó 
+      nó đã thực hiện hành động hút bụi làm thay đổi môi trường.
+======================================================================

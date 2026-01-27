@@ -1,0 +1,203 @@
+======================================================================
+BÁO CÁO CHI TIẾT: CÁC GIẢI THUẬT TÌM KIẾM CÓ THÔNG TIN (INFORMED SEARCH)
+ĐỀ TÀI: VACUUM WORLD (ROBOT HÚT BỤI)
+====================================
+
+## I. UNIFORM COST SEARCH (UCS) – TÌM KIẾM THEO CHI PHÍ ĐỒNG NHẤT
+
+1. NGUYÊN LÝ HOẠT ĐỘNG
+   UCS mở rộng không gian trạng thái dựa trên TỔNG CHI PHÍ đường đi từ trạng
+   thái ban đầu đến trạng thái hiện tại. Trạng thái nào có chi phí nhỏ nhất
+   sẽ được duyệt trước, không phụ thuộc vào độ sâu.
+
+* Hàm đánh giá:
+  f(n) = g(n)
+
+  Trong đó:
+  g(n): tổng chi phí từ trạng thái ban đầu đến node n.
+
+* Cấu trúc dữ liệu: Hàng đợi ưu tiên (Priority Queue).
+
+* Chiến lược: "Chi phí thấp nhất thì duyệt trước".
+
+2. MÃ GIẢ (PSEUDOCODE)
+
+  function UCS(initial_state):
+    node = CreateNode(initial_state, cost = 0)
+    frontier = PriorityQueue(order by path_cost)
+    frontier.push(node)
+    explored = Set()
+
+    while not frontier.isEmpty():
+        node = frontier.pop()
+        if GoalTest(node.state):
+            return node
+        explored.add(node.state)
+
+        for action in Actions(node.state):
+            child = ChildNode(node, action)
+            if child.state not in explored and child not in frontier:
+                frontier.push(child)
+            else if child in frontier with higher cost:
+                replace with child
+    return Failure
+
+3. PHÂN TÍCH ĐỘ PHỨC TẠP
+
+- b: hệ số nhánh
+- C*: chi phí lời giải tối ưu
+- ε: chi phí hành động nhỏ nhất (>0)
+- Độ phức tạp thời gian: O(b^(C*/ε))
+- Độ phức tạp không gian: O(b^(C*/ε))
+
+4. ĐÁNH GIÁ TRONG VACUUM WORLD
+
+* Ưu điểm:
+
+  * Đảm bảo tìm được lời giải TỐI ƯU nếu mọi chi phí không âm.
+  * Phù hợp khi các hành động có chi phí khác nhau.
+
+* Nhược điểm:
+
+  * Tốn bộ nhớ lớn, tương tự BFS.
+  * Có thể chậm khi nhiều đường đi có chi phí gần bằng nhau.
+
+======================================================================
+
+## II. GREEDY BEST-FIRST SEARCH – TÌM KIẾM THAM LAM
+
+1. NGUYÊN LÝ HOẠT ĐỘNG
+   Greedy Best-First Search chỉ quan tâm đến MỨC ĐỘ GẦN ĐÍCH, bỏ qua chi phí
+   đã đi. Thuật toán luôn chọn trạng thái có heuristic nhỏ nhất.
+
+* Hàm đánh giá:
+  f(n) = h(n)
+
+  Trong đó:
+  h(n): hàm heuristic ước lượng chi phí từ n đến đích.
+
+* Cấu trúc dữ liệu: Hàng đợi ưu tiên (theo h(n)).
+
+* Chiến lược: "Thấy đích gần thì đi trước".
+
+2. MÃ GIẢ (PSEUDOCODE)
+
+  function Greedy(initial_state):
+    node = CreateNode(initial_state)
+    frontier = PriorityQueue(order by h)
+    frontier.push(node)
+    explored = Set()
+
+
+    while not frontier.isEmpty():
+        node = frontier.pop()
+        if GoalTest(node.state):
+            return node
+        explored.add(node.state)
+
+        for action in Actions(node.state):
+            child = ChildNode(node, action)
+            if child.state not in explored and child not in frontier:
+                frontier.push(child)
+    return Failure
+
+
+3. PHÂN TÍCH ĐỘ PHỨC TẠP
+
+- Độ phức tạp thời gian: O(b^m)
+- Độ phức tạp không gian: O(b^m)
+
+4. ĐÁNH GIÁ TRONG VACUUM WORLD
+
+* Ví dụ heuristic:
+
+  * Khoảng cách Manhattan đến ô bẩn gần nhất.
+  * Số lượng ô bẩn còn lại.
+
+* Ưu điểm:
+
+  * Chạy rất nhanh.
+  * Dễ cài đặt.
+
+* Nhược điểm:
+
+  * KHÔNG đảm bảo tối ưu.
+  * Dễ rơi vào ngõ cụt, đường đi dài.
+
+======================================================================
+
+## III. A* SEARCH – TÌM KIẾM TỐI ƯU CÓ HEURISTIC
+
+1. NGUYÊN LÝ HOẠT ĐỘNG
+   A* kết hợp UCS và Greedy bằng cách xét đồng thời chi phí đã đi và ước
+   lượng còn lại.
+
+* Hàm đánh giá:
+  f(n) = g(n) + h(n)
+
+* Cấu trúc dữ liệu: Hàng đợi ưu tiên (theo f(n)).
+
+* Chiến lược: "Đi rẻ nhưng vẫn hướng đúng đích".
+
+2. MÃ GIẢ (PSEUDOCODE)
+
+  function AStar(initial_state):
+    node = CreateNode(initial_state, cost = 0)
+    frontier = PriorityQueue(order by f = g + h)
+    frontier.push(node)
+    explored = Set()
+
+    while not frontier.isEmpty():
+        node = frontier.pop()
+        if GoalTest(node.state):
+            return node
+        explored.add(node.state)
+
+        for action in Actions(node.state):
+            child = ChildNode(node, action)
+            if child.state not in explored and child not in frontier:
+                frontier.push(child)
+            else if child in frontier with higher f:
+                replace with child
+    return Failure
+
+3. PHÂN TÍCH ĐỘ PHỨC TẠP
+
+- Độ phức tạp thời gian: O(b^d)
+- Độ phức tạp không gian: O(b^d)
+
+Nếu heuristic là admissible (không bao giờ đánh giá cao hơn chi phí thật)
+thì A* đảm bảo tìm được lời giải TỐI ƯU.
+
+4. ĐÁNH GIÁ TRONG VACUUM WORLD
+
+* Heuristic phù hợp:
+
+  * Tổng khoảng cách Manhattan đến tất cả các ô bẩn.
+  * Khoảng cách đến ô bẩn xa nhất.
+
+* Ưu điểm:
+
+  * Tối ưu và hiệu quả.
+  * Giảm mạnh số lượng node so với BFS/UCS.
+
+* Nhược điểm:
+
+  * Tốn nhiều bộ nhớ.
+  * Phụ thuộc mạnh vào heuristic.
+
+======================================================================
+
+## IV. BẢNG SO SÁNH TỔNG HỢP (UCS vs GREEDY vs A*)
+
++----------------------+-------------+-------------+-------------+
+| TIÊU CHÍ             | UCS         | GREEDY      | A*          |
++----------------------+-------------+-------------+-------------+
+| Hàm đánh giá         | g(n)        | h(n)        | g(n) + h(n) |
+| Tính tối ưu          | CÓ          | KHÔNG       | CÓ*         |
+| Phụ thuộc heuristic  | KHÔNG       | RẤT CAO     | CAO         |
+| Tốc độ               | Trung bình  | Rất nhanh   | Nhanh       |
+| Bộ nhớ               | Cao         | Cao         | Cao         |
++----------------------+-------------+-------------+-------------+
+
+# *CÓ nếu heuristic admissible

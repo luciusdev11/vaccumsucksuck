@@ -5,9 +5,10 @@ Giao diện đồ họa chính cho Vacuum World
 import pygame
 import random
 import os
-from typing import List, Optional, Callable, Dict, Tuple
+import threading
+from typing import List, Optional, Callable, Dict, Tuple, Set
 
-from app.models import Action, State, SearchResult
+from app.models import Action, State, SearchResult, SearchProgress
 from app.core import VacuumWorld, DEFAULT_GRID_SIZE, MIN_GRID_SIZE, MAX_GRID_SIZE
 from app.algorithms import SearchAlgorithms, DEFAULT_ALGORITHMS
 from .config import (COLORS, MIN_CELL_SIZE, MAX_CELL_SIZE, SIDEBAR_WIDTH, 
@@ -81,6 +82,15 @@ class VacuumWorldGUI:
         self.animation_speed = 500
         self.last_step_time = 0
         self.search_result: Optional[SearchResult] = None
+        self.solution_positions: Set[Tuple[int, int]] = set() # Robot positions on solution path
+        
+        # Threading state
+        self.is_searching = False
+        self.search_thread: Optional[threading.Thread] = None
+        self.pending_search_result: Optional[SearchResult] = None
+        self.algorithm_warning: Optional[str] = None 
+        self.search_progress = SearchProgress()  # Progress tracking
+        self.show_search_viz = True  # Toggle for search visualization
         
         # Lưu vị trí bụi cố định để vẽ
         self.dirt_positions: Dict[Tuple[int, int], List[Tuple[int, int, int]]] = {}
@@ -119,7 +129,7 @@ class VacuumWorldGUI:
         num_algo = len(self.algorithm_names) if hasattr(self, 'algorithm_names') else 5
         sidebar_height = 50 + (4 * 30) + 10 + (num_algo * 30) + 10 + (4 * 30) + 40
         
-        self.window_width = grid_area + SIDEBAR_WIDTH + 40
+        self.window_width = grid_area + SIDEBAR_WIDTH + 600 + 100  # Even wider for massive tree
         self.window_height = max(grid_area + TOP_BAR_HEIGHT + BOTTOM_BAR_HEIGHT + 20, 
                                 sidebar_height + TOP_BAR_HEIGHT + 20)
     
@@ -143,11 +153,11 @@ class VacuumWorldGUI:
         
         y += BUTTON_HEIGHT + BUTTON_SPACING + 8
         
-        # Điều khiển môi trường
+        # Environment controls
         env_buttons = [
-            ('random_dirt', "Random Bụi", COLORS['BROWN']),
-            ('clear_dirt', "Xóa Bụi", COLORS['DARK_GRAY']),
-            ('place_robot', "Đặt Robot", COLORS['BLUE']),
+            ('random_dirt', "Random Dirt", COLORS['BROWN']),
+            ('clear_dirt', "Clear Dirt", COLORS['DARK_GRAY']),
+            ('place_robot', "Place Robot", COLORS['BLUE']),
             ('reset', "Reset All", COLORS['RED']),
         ]
         
@@ -175,12 +185,12 @@ class VacuumWorldGUI:
         
         y += 6
         
-        # Điều khiển chạy
+        # Run controls
         run_buttons = [
-            ('solve', "Tìm Đường", COLORS['GREEN']),
-            ('step', "Bước Tiếp", COLORS['BLUE']),
-            ('auto_run', "Tự Động", COLORS['PURPLE']),
-            ('stop', "Dừng", COLORS['RED']),
+            ('solve', "Find Path", COLORS['GREEN']),
+            ('step', "Step", COLORS['BLUE']),
+            ('auto_run', "Auto Run", COLORS['PURPLE']),
+            ('stop', "Stop", COLORS['RED']),
         ]
         
         for name, text, color in run_buttons:
@@ -366,14 +376,14 @@ class VacuumWorldGUI:
         pygame.draw.rect(self.screen, COLORS['LIGHT_BLUE'], 
                         (0, 0, self.window_width, TOP_BAR_HEIGHT))
         
-        title = self.font_large.render("VACUUM WORLD - Robot Hút Bụi", True, COLORS['BLUE'])
+        title = self.font_large.render("VACUUM WORLD - AI Robot Cleaner", True, COLORS['BLUE'])
         self.screen.blit(title, (self.grid_offset_x, 12))
         
         if self.placing_robot:
-            hint = self.font_medium.render("Click vào ô để đặt robot", True, COLORS['RED'])
+            hint = self.font_medium.render("Click on a cell to place robot", True, COLORS['RED'])
         else:
             hint = self.font_small.render(
-                "Click: Bật/tắt bụi | Phím mũi tên: Di chuyển | S: Hút | Space: Tìm đường", 
+                "Click: Toggle dirt | Arrow keys: Move | S: Suck | Space: Find path", 
                 True, COLORS['DARK_GRAY'])
         self.screen.blit(hint, (self.grid_offset_x, 38))
     
@@ -418,27 +428,48 @@ class VacuumWorldGUI:
         pygame.draw.rect(self.screen, (250, 250, 250), info_rect, border_radius=5)
         pygame.draw.rect(self.screen, COLORS['GRAY'], info_rect, 1, border_radius=5)
         
-        # Dòng 1: Trạng thái
+        # Line 1: Status
         if info_width < 280:
-            status_text = f"({self.world.robot_pos[0]},{self.world.robot_pos[1]}) | Bụi:{len(self.world.dirt_set)} | B:{self.world.total_cost}"
+            status_text = f"({self.world.robot_pos[0]},{self.world.robot_pos[1]}) | Dirt:{len(self.world.dirt_set)} | Steps:{self.world.total_cost}"
         else:
-            status_text = f"Robot: {self.world.robot_pos} | Bụi: {len(self.world.dirt_set)} | Bước: {self.world.total_cost} | Algo: {self.selected_algorithm}"
+            status_text = f"Robot: {self.world.robot_pos} | Dirt: {len(self.world.dirt_set)} | Steps: {self.world.total_cost} | Algo: {self.selected_algorithm}"
         text = self.font_small.render(status_text, True, COLORS['BLACK'])
         self.screen.blit(text, (self.grid_offset_x + 5, bottom_y))
         
-        # Dòng 2: Kết quả tìm kiếm
+        # Show calculating message if searching
+        if self.is_searching:
+            calc_y = bottom_y + 18
+            calc_text = self.font_medium.render("Calculating path...", True, COLORS['ORANGE'])
+            self.screen.blit(calc_text, (self.grid_offset_x + 5, calc_y))
+            
+            # Show warning if there is one
+            if self.algorithm_warning:
+                warn_y = bottom_y + 36
+                warn_text = self.font_small.render(self.algorithm_warning, True, COLORS['RED'])
+                self.screen.blit(warn_text, (self.grid_offset_x + 5, warn_y))
+            
+            return  # Don't show other info while calculating
+        
+        # Line 2: Search results
         if self.search_result:
             result_y = bottom_y + 18
             if self.search_result.success:
                 if info_width < 280:
-                    result_text = f"{len(self.search_result.path)}b | N:{self.search_result.nodes_expanded} | {self.search_result.time_taken*1000:.0f}ms"
+                    result_text = f"{len(self.search_result.path)}s | N:{self.search_result.nodes_expanded} | {self.search_result.time_taken*1000:.0f}ms"
                 else:
-                    result_text = (f"Tìm thấy: {len(self.search_result.path)} bước | "
+                    result_text = (f"Found: {len(self.search_result.path)} steps | "
                                  f"Nodes: {self.search_result.nodes_expanded} | "
                                  f"Time: {self.search_result.time_taken*1000:.1f}ms")
                 color = COLORS['GREEN']
             else:
-                result_text = "Không tìm thấy!" if info_width < 280 else "Không tìm thấy đường đi!"
+                # Check if it's a timeout or node limit
+                algo_name = self.search_result.algorithm_name
+                if "timeout" in algo_name:
+                    result_text = "Timeout after 15s" if info_width < 280 else f"Failed: Timeout after 15s ({self.search_result.nodes_expanded} nodes)"
+                elif "node limit" in algo_name:
+                    result_text = "Node limit (100k)" if info_width < 280 else f"Failed: Node limit reached (100,000 nodes)"
+                else:
+                    result_text = "Not found!" if info_width < 280 else "Path not found!"
                 color = COLORS['RED']
             
             text = self.font_small.render(result_text, True, color)
@@ -464,7 +495,7 @@ class VacuumWorldGUI:
             self.screen.blit(msg_text, (self.grid_offset_x + 5, msg_y))
     
     def draw(self):
-        """Vẽ toàn bộ giao diện"""
+        """Draw everything"""
         self.screen.fill(COLORS['WHITE'])
         
         self.draw_top_bar()
@@ -474,6 +505,7 @@ class VacuumWorldGUI:
         self.draw_robot()
         self.draw_sidebar()
         self.draw_bottom_bar()
+        self.draw_progress_panel()  # Draw live search progress and tree diagram
         
         pygame.display.flip()
     
@@ -489,7 +521,7 @@ class VacuumWorldGUI:
                 self.world.set_robot_position((x, y))
                 self.placing_robot = False
                 self.buttons['place_robot'].color = COLORS['BLUE']
-                self.show_message(f"Đã đặt robot tại ({x}, {y})")
+                self.show_message(f"Robot placed at ({x}, {y})")
             else:
                 self.world.toggle_dirt((x, y))
                 if (x, y) in self.world.dirt_set:
@@ -506,13 +538,13 @@ class VacuumWorldGUI:
             if self.world.grid_size < MAX_GRID_SIZE:
                 self.world.set_grid_size(self.world.grid_size + 1)
                 self.resize_window()
-                self.show_message(f"Lưới: {self.world.grid_size}x{self.world.grid_size}")
+                self.show_message(f"Grid: {self.world.grid_size}x{self.world.grid_size}")
         
         elif name == 'size_down':
             if self.world.grid_size > MIN_GRID_SIZE:
                 self.world.set_grid_size(self.world.grid_size - 1)
                 self.resize_window()
-                self.show_message(f"Lưới: {self.world.grid_size}x{self.world.grid_size}")
+                self.show_message(f"Grid: {self.world.grid_size}x{self.world.grid_size}")
         
         elif name == 'random_dirt':
             self.world.random_dirt(0.3)
@@ -537,7 +569,7 @@ class VacuumWorldGUI:
             self.search_result = None
             self.auto_running = False
             self.current_step = 0
-            self.show_message("Đã reset!")
+            self.show_message("Reset complete!")
         
         elif name.startswith('algo_'):
             algo_name = name[5:]
@@ -546,7 +578,7 @@ class VacuumWorldGUI:
                 if btn_name.startswith('algo_'):
                     is_selected = (btn_name == name)
                     self.buttons[btn_name].color = COLORS['GREEN'] if is_selected else COLORS['DARK_GRAY']
-            self.show_message(f"Đã chọn: {algo_name}")
+            self.show_message(f"Selected: {algo_name}")
         
         elif name == 'solve':
             self.solve()
@@ -559,11 +591,12 @@ class VacuumWorldGUI:
                 self.auto_running = not self.auto_running
                 self.buttons['auto_run'].color = COLORS['ORANGE'] if self.auto_running else COLORS['PURPLE']
             else:
-                self.show_message("Hãy tìm đường trước!")
+                self.show_message("Find path first!")
         
         elif name == 'stop':
             self.auto_running = False
             self.buttons['auto_run'].color = COLORS['PURPLE']
+            self.show_message("Stopped.")
         
         elif name == 'speed_up':
             self.animation_speed = max(50, self.animation_speed - 50)
@@ -609,7 +642,7 @@ class VacuumWorldGUI:
                     del self.dirt_positions[self.world.robot_pos]
             
             if completed:
-                self.show_message("Hoàn thành! Môi trường đã sạch!")
+                self.show_message("Complete! Environment is clean!")
     
     def handle_events(self):
         """Xử lý các sự kiện"""
@@ -643,27 +676,62 @@ class VacuumWorldGUI:
     
     # ========================== SEARCH METHODS ==========================
     
+    def _run_search_in_thread(self, algorithm_func: Callable, initial_state: State, grid_size: int):
+        """Background thread to run search algorithm"""
+        try:
+            # Start progress tracking
+            algo_name = self.selected_algorithm
+            self.search_progress.start(algo_name)
+            
+            # Run algorithm with progress tracking
+            result = algorithm_func(initial_state, grid_size, self.search_progress)
+            self.pending_search_result = result
+            
+            # Stop progress tracking
+            self.search_progress.stop()
+        except Exception as e:
+            print(f"Error in search: {e}")
+            self.pending_search_result = SearchResult(
+                path=[], nodes_expanded=0, time_taken=0,
+                memory_used=0, success=False, algorithm_name="Error"
+            )
+            self.search_progress.stop()
+        finally:
+            self.is_searching = False
+    
     def solve(self, algorithm_func: Callable = None):
-        """Chạy giải thuật tìm kiếm"""
+        """Run search algorithm"""
+        # Don't start new search if already searching
+        if self.is_searching:
+            self.show_message("Calculating...")
+            return
+        
         initial_state = self.world.get_state()
         
         if initial_state.is_goal():
-            self.show_message("Môi trường đã sạch!")
+            self.show_message("Environment is clean!")
             return
         
         if algorithm_func is None:
             algorithm_func = self.algorithms.get(self.selected_algorithm)
         
         if algorithm_func:
-            self.search_result = algorithm_func(initial_state, self.world.grid_size)
+            # Show warning for risky combinations
+            self._check_and_warn_algorithm()
             
-            if self.search_result.success:
-                self.solution_path = self.search_result.path
-                self.current_step = 0
-                self.show_message(f"Tìm thấy đường đi: {len(self.solution_path)} bước!")
-            else:
-                self.solution_path = []
-                self.show_message("Không tìm thấy đường đi!")
+            # Disable buttons during search
+            self._set_buttons_enabled(False)
+            
+            # Start search in background thread
+            self.is_searching = True
+            self.pending_search_result = None
+            self.search_thread = threading.Thread(
+                target=self._run_search_in_thread,
+                args=(algorithm_func, initial_state, self.world.grid_size),
+                daemon=True
+            )
+            self.search_thread.start()
+            self.show_message("Calculating path...")
     
     def step_forward(self):
         """Thực hiện một bước tiếp theo"""
@@ -678,11 +746,33 @@ class VacuumWorldGUI:
                     del self.dirt_positions[pos]
             
             if self.current_step >= len(self.solution_path):
-                self.show_message("Hoàn thành!")
+                self.show_message("Complete!")
                 self.auto_running = False
     
     def update(self):
-        """Cập nhật trạng thái mỗi frame"""
+        """Update state each frame"""
+        # Check if search completed
+        if self.pending_search_result is not None:
+            self.search_result = self.pending_search_result
+            self.pending_search_result = None
+            self.algorithm_warning = None  # Clear warning after search completes
+            
+            # Re-enable buttons after search completes
+            self._set_buttons_enabled(True)
+            
+            if self.search_result.success:
+                self.solution_path = self.search_result.path
+                self.current_step = 0
+                # Pre-calculate robot positions on solution path for tree visualization
+                # We need the initial state of the search, which is the current state
+                state_path = self.world.get_state_path(self.solution_path)
+                self.solution_positions = {s.robot_pos for s in state_path}
+                self.show_message(f"Found path: {len(self.solution_path)} steps!")
+            else:
+                self.solution_path = []
+                self.solution_positions = set()
+                self.show_message("Path not found!")
+        
         if self.auto_running and self.solution_path:
             current_time = pygame.time.get_ticks()
             if current_time - self.last_step_time >= self.animation_speed:
@@ -703,8 +793,31 @@ class VacuumWorldGUI:
         
         pygame.quit()
     
+    def _set_buttons_enabled(self, enabled: bool):
+        """Enable or disable all buttons"""
+        for button in self.buttons.values():
+            button.enabled = enabled
+    
+    def _check_and_warn_algorithm(self):
+        """Check if algorithm/board combination is risky and show warning"""
+        grid_size = self.world.grid_size
+        algo = self.selected_algorithm
+        dirt_count = len(self.world.dirt_set)
+        
+        # Define risky combinations
+        slow_algos = ["BFS", "DFS", "UCS"]
+        
+        self.algorithm_warning = None  # Clear previous warning
+        
+        if algo in slow_algos and grid_size >= 7:
+            self.algorithm_warning = f"WARNING: {algo} may timeout on {grid_size}x{grid_size}! Consider Greedy NN."
+        elif algo in slow_algos and grid_size == 6 and dirt_count > 8:
+            self.algorithm_warning = f"WARNING: {algo} may be slow ({dirt_count} dirt). Try A* or Greedy NN."
+        elif algo == "Greedy" and grid_size >= 7:
+            self.algorithm_warning = f"WARNING: Greedy may timeout on {grid_size}x{grid_size}. Try Greedy NN."
+    
     def set_algorithm(self, name: str, func: Callable):
-        """Thêm hoặc cập nhật thuật toán"""
+        """Add or update algorithm"""
         self.algorithms[name] = func
         if name not in self.algorithm_names:
             self.algorithm_names.append(name)
@@ -713,3 +826,234 @@ class VacuumWorldGUI:
     def run_with_algorithm(self, algorithm_func: Callable):
         """Chạy tìm kiếm với thuật toán được truyền vào"""
         self.solve(algorithm_func)
+        
+    def draw_tree_diagram(self, x, y, width, height):
+        """Draw a hierarchical tree diagram in the specified area"""
+        if not self.search_result or not hasattr(self.search_result, 'search_tree'):
+            return
+            
+        edges = self.search_result.search_tree
+        if not edges:
+            return
+            
+        # Group by levels for layout
+        levels = {} # depth -> list of robot positions
+        parents = {} # child -> parent
+        
+        # Build tree structure from edges
+        # Start from initial state (level 0)
+        # For visualization, we limit to first N nodes to keep it readable
+        max_edges = 300 
+        visible_edges = edges[:max_edges]
+        
+        # Extract unique positions and their levels
+        # Simplified: level is distance from root or just first encounter
+        if not visible_edges:
+            return
+            
+        root = visible_edges[0][0]
+        levels[0] = [root]
+        pos_to_level = {root: 0}
+        
+        for p, a, c in visible_edges:
+            if p in pos_to_level:
+                l = pos_to_level[p] + 1
+                if c not in pos_to_level:
+                    pos_to_level[c] = l
+                    if l not in levels: levels[l] = []
+                    levels[l].append(c)
+                    parents[c] = p
+        
+        # Calculate node positions
+        node_coords = {}
+        max_l = max(levels.keys()) if levels else 0
+        if max_l == 0: return
+
+        dy = height / (max_l + 1)
+        for l, nodes in levels.items():
+            dx = width / (len(nodes) + 1)
+            for i, node in enumerate(nodes):
+                node_coords[node] = (x + dx * (i + 1), y + dy * l)
+                
+        # Draw nodes
+        for node, coord in node_coords.items():
+            # Draw larger nodes for labels
+            pygame.draw.circle(self.screen, COLORS['WHITE'], coord, 12)
+            pygame.draw.circle(self.screen, COLORS['BLACK'], coord, 12, 1)
+            
+            # Draw (x,y) label with bold look
+            label = self.font_small.render(f"{node[0]},{node[1]}", True, COLORS['BLACK'])
+            label_rect = label.get_rect(center=(coord[0], coord[1]))
+            self.screen.blit(label, label_rect)
+            
+        # Draw edges with actions
+        for p, a, c in visible_edges:
+            if p in node_coords and c in node_coords:
+                # Highlight if on solution path
+                is_on_path = False
+                if self.solution_positions and c in self.solution_positions and p in self.solution_positions:
+                     is_on_path = True
+                
+                # Check if this edge leads to the current robot position during playback
+                is_current_step = False
+                if self.solution_path and self.current_step > 0:
+                    state_path = self.world.get_state_path(self.solution_path[:self.current_step])
+                    if len(state_path) > 1 and state_path[-1].robot_pos == c and state_path[-2].robot_pos == p:
+                        is_current_step = True
+                
+                start_pos = node_coords[p]
+                end_pos = node_coords[c]
+                
+                color = COLORS['RED'] if is_current_step else (COLORS['BLUE'] if is_on_path else COLORS['GRAY'])
+                thickness = 4 if is_current_step else (2 if is_on_path else 1)
+                pygame.draw.line(self.screen, color, start_pos, end_pos, thickness)
+                
+                # Draw action label on the middle of the edge
+                mid_x = (start_pos[0] + end_pos[0]) // 2
+                mid_y = (start_pos[1] + end_pos[1]) // 2
+                
+                action_text = a.name[0] if hasattr(a, 'name') else str(a)[0] # Get first letter of action
+                action_label = self.font_small.render(action_text, True, color)
+                # Offset slightly so it doesn't sit exactly on the line
+                self.screen.blit(action_label, (mid_x + 6, mid_y - 12))
+
+        # Re-draw active node in red if it exists
+        if self.solution_path and self.current_step >= 0:
+            state_path = self.world.get_state_path(self.solution_path[:self.current_step])
+            current_pos = state_path[-1].robot_pos
+            if current_pos in node_coords:
+                coord = node_coords[current_pos]
+                pygame.draw.circle(self.screen, COLORS['RED'], coord, 15, 3) # Red highlight ring
+
+        
+    def draw_search_tree(self):
+        """Visualize the explored states on the grid"""
+        if not self.show_search_viz or not self.search_result:
+            return
+            
+        # Draw explored nodes (robot positions)
+        if hasattr(self.search_result, 'explored_nodes') and self.search_result.explored_nodes:
+            # We use a set to avoid drawing the same cell multiple times
+            unique_nodes = set(self.search_result.explored_nodes)
+            for x, y in unique_nodes:
+                # Calculate center of the cell
+                center_x = self.grid_offset_x + x * self.cell_size + self.cell_size // 2
+                center_y = self.grid_offset_y + y * self.cell_size + self.cell_size // 2
+                
+                # Draw a small cyan dot for explored nodes
+                # Pygame draw circle with slightly transparent look by using a small radius
+                pygame.draw.circle(self.screen, (0, 206, 209), (center_x, center_y), self.cell_size // 8)
+    def draw_progress_panel(self):
+        """Draw live search progress in right panel"""
+        # Panel position (right side of sidebar)
+        sidebar_x = self.grid_offset_x + (self.world.grid_size * self.cell_size) + 15
+        panel_x = sidebar_x + SIDEBAR_WIDTH + 10
+        panel_y = TOP_BAR_HEIGHT + 20
+        panel_width = 600
+        panel_height = self.window_height - TOP_BAR_HEIGHT - BOTTOM_BAR_HEIGHT - 40
+        
+        if panel_width < 150:
+            return
+        
+        progress = self.search_progress.get_snapshot()
+        
+        panel_rect = pygame.Rect(panel_x, panel_y, panel_width, panel_height)
+        pygame.draw.rect(self.screen, (245, 245, 250), panel_rect, border_radius=8)
+        pygame.draw.rect(self.screen, COLORS['GRAY'], panel_rect, 2, border_radius=8)
+        
+        title_text = self.font_medium.render("SEARCH PROGRESS", True, COLORS['BLUE'])
+        self.screen.blit(title_text, (panel_x + 10, panel_y + 10))
+        
+        y_offset = panel_y + 40
+        
+        if progress['is_active'] or self.is_searching:
+            from app.algorithms.search_algorithms import MAX_NODES
+            
+            algo_text = self.font_small.render(f"Algorithm: {progress['algorithm_name']}", True, COLORS['BLACK'])
+            self.screen.blit(algo_text, (panel_x + 10, y_offset))
+            y_offset += 25
+            
+            status_text = self.font_small.render("Status: Searching...", True, COLORS['ORANGE'])
+            self.screen.blit(status_text, (panel_x + 10, y_offset))
+            y_offset += 35
+            
+            nodes_text = self.font_small.render(f"Nodes Explored: {progress['nodes_explored']:,}", True, COLORS['BLACK'])
+            self.screen.blit(nodes_text, (panel_x + 10, y_offset))
+            y_offset += 20
+            
+            frontier_text = self.font_small.render(f"Frontier Size: {progress['frontier_size']:,}", True, COLORS['BLACK'])
+            self.screen.blit(frontier_text, (panel_x + 10, y_offset))
+            y_offset += 20
+            
+            time_text = self.font_small.render(f"Time Elapsed: {progress['time_elapsed']:.2f}s", True, COLORS['BLACK'])
+            self.screen.blit(time_text, (panel_x + 10, y_offset))
+            y_offset += 35
+            
+            progress_ratio = min(1.0, progress['nodes_explored'] / MAX_NODES)
+            bar_width = panel_width - 20
+            bar_height = 20
+            
+            bar_rect = pygame.Rect(panel_x + 10, y_offset, bar_width, bar_height)
+            pygame.draw.rect(self.screen, (220, 220, 220), bar_rect, border_radius=4)
+            
+            filled_width = int(bar_width * progress_ratio)
+            if filled_width > 0:
+                filled_rect = pygame.Rect(panel_x + 10, y_offset, filled_width, bar_height)
+                color = COLORS['GREEN'] if progress_ratio < 0.8 else COLORS['ORANGE']
+                pygame.draw.rect(self.screen, color, filled_rect, border_radius=4)
+            
+            pygame.draw.rect(self.screen, COLORS['GRAY'], bar_rect, 1, border_radius=4)
+            
+            percent_text = self.font_small.render(f"{int(progress_ratio * 100)}%", True, COLORS['BLACK'])
+            self.screen.blit(percent_text, (panel_x + 10, y_offset + 25))
+            y_offset += 60
+            
+            # --- Search Tree Diagram Section ---
+            pygame.draw.line(self.screen, COLORS['GRAY'], (panel_x + 10, y_offset), (panel_x + panel_width - 10, y_offset))
+            y_offset += 15
+            
+            tree_title = self.font_medium.render("SEARCH TREE", True, COLORS['BLUE'])
+            self.screen.blit(tree_title, (panel_x + 10, y_offset))
+            y_offset += 30
+            
+            # Draw empty tree placeholders while searching
+            searching_text = self.font_small.render("Building tree...", True, COLORS['DARK_GRAY'])
+            self.screen.blit(searching_text, (panel_x + 10, y_offset))
+            
+        elif self.search_result:
+            # Show completed stats
+            algo_text = self.font_small.render(f"Algorithm: {self.search_result.algorithm_name}", True, COLORS['BLACK'])
+            self.screen.blit(algo_text, (panel_x + 10, y_offset))
+            y_offset += 25
+            
+            status_text = self.font_small.render(f"Status: {'Success' if self.search_result.success else 'Failed'}", 
+                                               True, COLORS['GREEN'] if self.search_result.success else COLORS['RED'])
+            self.screen.blit(status_text, (panel_x + 10, y_offset))
+            y_offset += 35
+            
+            nodes_text = self.font_small.render(f"Nodes Explored: {self.search_result.nodes_expanded:,}", True, COLORS['BLACK'])
+            self.screen.blit(nodes_text, (panel_x + 10, y_offset))
+            y_offset += 20
+            
+            time_text = self.font_small.render(f"Time Taken: {self.search_result.time_taken:.3f}s", True, COLORS['BLACK'])
+            self.screen.blit(time_text, (panel_x + 10, y_offset))
+            y_offset += 50
+            
+            # --- Search Tree Diagram ---
+            pygame.draw.line(self.screen, COLORS['GRAY'], (panel_x + 10, y_offset), (panel_x + panel_width - 10, y_offset))
+            y_offset += 15
+            
+            tree_title = self.font_medium.render("SEARCH TREE", True, COLORS['BLUE'])
+            self.screen.blit(tree_title, (panel_x + 10, y_offset))
+            y_offset += 30
+            
+            # Draw the tree diagram
+            self.draw_tree_diagram(panel_x + 10, y_offset, panel_width - 20, panel_height - (y_offset - panel_y) - 10)
+            
+        else:
+            idle_text = self.font_small.render("No search running", True, COLORS['DARK_GRAY'])
+            self.screen.blit(idle_text, (panel_x + 10, y_offset))
+            y_offset += 25
+            
+            help_text = self.font_small.render("Click 'Find Path' to start", True, COLORS['DARK_GRAY'])
+            self.screen.blit(help_text, (panel_x + 10, y_offset))

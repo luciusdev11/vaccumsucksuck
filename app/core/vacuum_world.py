@@ -116,6 +116,39 @@ class VacuumWorld:
         """Lấy trạng thái hiện tại"""
         return State(self.robot_pos, self.dirt_set)
     
+    def get_state_path(self, path: List[Action], start_state: State = None) -> List[State]:
+        """
+        Lấy danh sách các trạng thái đi qua dựa trên chuỗi hành động.
+        
+        Args:
+            path: Danh sách các hành động
+            start_state: Trạng thái bắt đầu (mặc định là trạng thái hiện tại)
+            
+        Returns:
+            List các State
+        """
+        if start_state is None:
+            start_state = self.get_state()
+            
+        states = [start_state]
+        current_state = start_state
+        
+        for action in path:
+            successors = VacuumWorld.get_successors(current_state, self.grid_size)
+            # Tìm trạng thái tương ứng với hành động
+            found = False
+            for act, next_state in successors:
+                if act == action:
+                    current_state = next_state
+                    states.append(current_state)
+                    found = True
+                    break
+            if not found:
+                # Nếu không tìm thấy (hành động lỗi), giữ nguyên trạng thái
+                states.append(current_state)
+                
+        return states
+    
     def set_grid_size(self, size: int):
         """Thay đổi kích thước lưới"""
         self.grid_size = max(MIN_GRID_SIZE, min(MAX_GRID_SIZE, size))

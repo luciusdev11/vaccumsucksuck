@@ -43,13 +43,17 @@ class SearchResult:
     
     def __init__(self, path: List[Action], nodes_expanded: int, 
                  time_taken: float, memory_used: int, success: bool,
-                 algorithm_name: str = "Unknown"):
+                 algorithm_name: str = "Unknown",
+                 explored_nodes: List[Tuple[int, int]] = None,
+                 search_tree: List[Tuple[Tuple[int, int], Action, Tuple[int, int]]] = None):
         self.path = path
         self.nodes_expanded = nodes_expanded
         self.time_taken = time_taken
         self.memory_used = memory_used
         self.success = success
         self.algorithm_name = algorithm_name
+        self.explored_nodes = explored_nodes or []
+        self.search_tree = search_tree or []  # List of (parent_pos, action, child_pos)
     
     def __repr__(self):
         return (f"SearchResult(algo={self.algorithm_name}, success={self.success}, "

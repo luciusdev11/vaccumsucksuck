@@ -14,6 +14,11 @@ from typing import Callable, Dict
 
 from app.models import State, Action, SearchResult
 from app.core import VacuumWorld
+from .greedy_nn import greedy_nearest_neighbor
+
+# Performance limits to prevent infinite search on large boards
+MAX_TIME_SECONDS = 15.0  # Maximum time allowed for search
+MAX_NODES = 100000  # Maximum nodes to expand
 
 
 class SearchAlgorithms:
@@ -44,7 +49,7 @@ class SearchAlgorithms:
         return int(min_distance) + len(state.dirt_set) - 1
     
     @staticmethod
-    def bfs(initial_state: State, grid_size: int) -> SearchResult:
+    def bfs(initial_state: State, grid_size: int, progress=None) -> SearchResult:
         """
         Breadth-First Search - Tìm kiếm theo chiều rộng
         
@@ -69,19 +74,39 @@ class SearchAlgorithms:
         explored = set()  # Tập trạng thái đã duyệt
         nodes_expanded = 0
         max_frontier_size = 1
+        search_tree = []  # List of (parent_pos, action, child_pos)
+        tree_node_limit = 2000  # Only capture first 2000 edges for visualization performance
         
         while frontier:
+            # Check timeout and node limit
+            if time.time() - start_time > MAX_TIME_SECONDS:
+                return SearchResult([], nodes_expanded, time.time() - start_time, 
+                                  max_frontier_size, False, "BFS (timeout)")
+            if nodes_expanded > MAX_NODES:
+                return SearchResult([], nodes_expanded, time.time() - start_time, 
+                                  max_frontier_size, False, "BFS (node limit)",
+                                  explored_nodes=[s.robot_pos for s in explored],
+                                  search_tree=search_tree)
+            
             max_frontier_size = max(max_frontier_size, len(frontier))
-            state, path = frontier.popleft()  # Lấy node đầu tiên ra
+            state, path = frontier.popleft()
             frontier_set.remove(state)
             
-            explored.add(state)  # Thêm vào explored sau khi lấy ra
+            explored.add(state)
             nodes_expanded += 1
             
+            # Update progress every 100 nodes
+            if progress and nodes_expanded % 100 == 0:
+                progress.update(nodes_expanded, len(frontier))
+            
             for action, next_state in VacuumWorld.get_successors(state, grid_size):
-                # Chỉ thêm nếu chưa duyệt và chưa có trong hàng đợi
+                if len(search_tree) < tree_node_limit:
+                    search_tree.append((state.robot_pos, action, next_state.robot_pos))
+                    
                 if next_state not in explored and next_state not in frontier_set:
-                    # Kiểm tra goal khi sinh node con (Early Goal Test)
+                    if len(search_tree) < tree_node_limit:
+                        search_tree.append((state.robot_pos, action, next_state.robot_pos))
+                        
                     if next_state.is_goal():
                         return SearchResult(
                             path=path + [action],
@@ -89,16 +114,20 @@ class SearchAlgorithms:
                             time_taken=time.time() - start_time,
                             memory_used=max_frontier_size,
                             success=True,
-                            algorithm_name="BFS"
+                            algorithm_name="BFS",
+                            explored_nodes=[s.robot_pos for s in explored],
+                            search_tree=search_tree
                         )
                     frontier.append((next_state, path + [action]))
                     frontier_set.add(next_state)
         
         return SearchResult([], nodes_expanded, time.time() - start_time, 
-                          max_frontier_size, False, "BFS")
+                          max_frontier_size, False, "BFS", 
+                          explored_nodes=[s.robot_pos for s in explored],
+                          search_tree=search_tree)
     
     @staticmethod
-    def dfs(initial_state: State, grid_size: int, max_depth: int = 100) -> SearchResult:
+    def dfs(initial_state: State, grid_size: int, progress=None, max_depth: int = 100) -> SearchResult:
         """
         Depth-First Search - Tìm kiếm theo chiều sâu
         
@@ -123,20 +152,34 @@ class SearchAlgorithms:
         explored = set()  # Tập trạng thái đã duyệt
         nodes_expanded = 0
         max_frontier_size = 1
+        search_tree = []
+        tree_node_limit = 2000
         
         while frontier:
+            # Check timeout and node limit
+            if time.time() - start_time > MAX_TIME_SECONDS:
+                return SearchResult([], nodes_expanded, time.time() - start_time, 
+                                  max_frontier_size, False, "DFS (timeout)",
+                                  explored_nodes=[s.robot_pos for s in explored])
+            if nodes_expanded > MAX_NODES:
+                return SearchResult([], nodes_expanded, time.time() - start_time, 
+                                  max_frontier_size, False, "DFS (node limit)",
+                                  explored_nodes=[s.robot_pos for s in explored])
+            
             max_frontier_size = max(max_frontier_size, len(frontier))
-            state, path = frontier.pop()  # Lấy node mới nhất vừa thêm vào
+            state, path = frontier.pop()
             frontier_set.discard(state)
             
-            # Giới hạn độ sâu để tránh vòng lặp vô tận
             if len(path) > max_depth:
                 continue
             
-            explored.add(state)  # Thêm vào explored sau khi lấy ra
+            explored.add(state)
             nodes_expanded += 1
             
-            # Kiểm tra goal
+            # Update progress every 100 nodes
+            if progress and nodes_expanded % 100 == 0:
+                progress.update(nodes_expanded, len(frontier))
+            
             if state.is_goal():
                 return SearchResult(
                     path=path,
@@ -144,11 +187,15 @@ class SearchAlgorithms:
                     time_taken=time.time() - start_time,
                     memory_used=max_frontier_size,
                     success=True,
-                    algorithm_name="DFS"
+                    algorithm_name="DFS",
+                    explored_nodes=[s.robot_pos for s in explored],
+                    search_tree=search_tree
                 )
             
             for action, next_state in VacuumWorld.get_successors(state, grid_size):
-                # Chỉ thêm nếu chưa duyệt và chưa có trong ngăn xếp
+                if len(search_tree) < tree_node_limit:
+                    search_tree.append((state.robot_pos, action, next_state.robot_pos))
+                    
                 if next_state not in explored and next_state not in frontier_set:
                     frontier.append((next_state, path + [action]))
                     frontier_set.add(next_state)
@@ -157,7 +204,7 @@ class SearchAlgorithms:
                           max_frontier_size, False, "DFS")
     
     @staticmethod
-    def ucs(initial_state: State, grid_size: int) -> SearchResult:
+    def ucs(initial_state: State, grid_size: int, progress=None) -> SearchResult:
         """
         Uniform Cost Search - Tìm kiếm chi phí đều
         
@@ -170,8 +217,22 @@ class SearchAlgorithms:
         explored = {}
         nodes_expanded = 0
         max_frontier_size = 1
+        search_tree = []
+        tree_node_limit = 2000
         
         while frontier:
+            # Check timeout and node limit
+            if time.time() - start_time > MAX_TIME_SECONDS:
+                return SearchResult([], nodes_expanded, time.time() - start_time, 
+                                  max_frontier_size, False, "UCS (timeout)",
+                                  explored_nodes=[s.robot_pos for s in explored],
+                                  search_tree=search_tree)
+            if nodes_expanded > MAX_NODES:
+                return SearchResult([], nodes_expanded, time.time() - start_time, 
+                                  max_frontier_size, False, "UCS (node limit)",
+                                  explored_nodes=[s.robot_pos for s in explored],
+                                  search_tree=search_tree)
+            
             max_frontier_size = max(max_frontier_size, len(frontier))
             cost, _, state, path = heapq.heappop(frontier)
             
@@ -181,6 +242,10 @@ class SearchAlgorithms:
             explored[state] = cost
             nodes_expanded += 1
             
+            # Update progress every 100 nodes
+            if progress and nodes_expanded % 100 == 0:
+                progress.update(nodes_expanded, len(frontier))
+            
             if state.is_goal():
                 return SearchResult(
                     path=path,
@@ -188,20 +253,26 @@ class SearchAlgorithms:
                     time_taken=time.time() - start_time,
                     memory_used=max_frontier_size,
                     success=True,
-                    algorithm_name="UCS"
+                    algorithm_name="UCS",
+                    explored_nodes=[s.robot_pos for s in explored],
+                    search_tree=search_tree
                 )
             
             for action, next_state in VacuumWorld.get_successors(state, grid_size):
+                if len(search_tree) < tree_node_limit:
+                    search_tree.append((state.robot_pos, action, next_state.robot_pos))
                 new_cost = cost + 1
                 if next_state not in explored or explored[next_state] > new_cost:
                     counter += 1
                     heapq.heappush(frontier, (new_cost, counter, next_state, path + [action]))
         
         return SearchResult([], nodes_expanded, time.time() - start_time, 
-                          max_frontier_size, False, "UCS")
+                          max_frontier_size, False, "UCS",
+                          explored_nodes=[s.robot_pos for s in explored],
+                          search_tree=search_tree)
     
     @staticmethod
-    def greedy(initial_state: State, grid_size: int) -> SearchResult:
+    def greedy(initial_state: State, grid_size: int, progress=None) -> SearchResult:
         """
         Greedy Best-First Search
         
@@ -215,8 +286,18 @@ class SearchAlgorithms:
         explored = set()
         nodes_expanded = 0
         max_frontier_size = 1
+        search_tree = []
+        tree_node_limit = 2000
         
         while frontier:
+            # Check timeout and node limit
+            if time.time() - start_time > MAX_TIME_SECONDS:
+                return SearchResult([], nodes_expanded, time.time() - start_time, 
+                                  max_frontier_size, False, "Greedy (timeout)")
+            if nodes_expanded > MAX_NODES:
+                return SearchResult([], nodes_expanded, time.time() - start_time, 
+                                  max_frontier_size, False, "Greedy (node limit)")
+            
             max_frontier_size = max(max_frontier_size, len(frontier))
             _, _, state, path = heapq.heappop(frontier)
             
@@ -226,6 +307,10 @@ class SearchAlgorithms:
             explored.add(state)
             nodes_expanded += 1
             
+            # Update progress every 100 nodes
+            if progress and nodes_expanded % 100 == 0:
+                progress.update(nodes_expanded, len(frontier))
+            
             if state.is_goal():
                 return SearchResult(
                     path=path,
@@ -233,20 +318,26 @@ class SearchAlgorithms:
                     time_taken=time.time() - start_time,
                     memory_used=max_frontier_size,
                     success=True,
-                    algorithm_name="Greedy"
+                    algorithm_name="Greedy",
+                    explored_nodes=[s.robot_pos for s in explored],
+                    search_tree=search_tree
                 )
             
             for action, next_state in VacuumWorld.get_successors(state, grid_size):
+                if len(search_tree) < tree_node_limit:
+                    search_tree.append((state.robot_pos, action, next_state.robot_pos))
                 if next_state not in explored:
                     counter += 1
                     h = SearchAlgorithms.heuristic(next_state, grid_size)
                     heapq.heappush(frontier, (h, counter, next_state, path + [action]))
         
         return SearchResult([], nodes_expanded, time.time() - start_time, 
-                          max_frontier_size, False, "Greedy")
+                          max_frontier_size, False, "Greedy",
+                          explored_nodes=[s.robot_pos for s in explored],
+                          search_tree=search_tree)
     
     @staticmethod
-    def astar(initial_state: State, grid_size: int) -> SearchResult:
+    def astar(initial_state: State, grid_size: int, progress=None) -> SearchResult:
         """
         A* Search
         
@@ -261,8 +352,22 @@ class SearchAlgorithms:
         explored = {}
         nodes_expanded = 0
         max_frontier_size = 1
+        search_tree = []
+        tree_node_limit = 2000
         
         while frontier:
+            # Check timeout and node limit
+            if time.time() - start_time > MAX_TIME_SECONDS:
+                return SearchResult([], nodes_expanded, time.time() - start_time, 
+                                  max_frontier_size, False, "A* (timeout)",
+                                  explored_nodes=[s.robot_pos for s in explored],
+                                  search_tree=search_tree)
+            if nodes_expanded > MAX_NODES:
+                return SearchResult([], nodes_expanded, time.time() - start_time, 
+                                  max_frontier_size, False, "A* (node limit)",
+                                  explored_nodes=[s.robot_pos for s in explored],
+                                  search_tree=search_tree)
+            
             max_frontier_size = max(max_frontier_size, len(frontier))
             f, _, g, state, path = heapq.heappop(frontier)
             
@@ -272,6 +377,10 @@ class SearchAlgorithms:
             explored[state] = g
             nodes_expanded += 1
             
+            # Update progress every 100 nodes
+            if progress and nodes_expanded % 100 == 0:
+                progress.update(nodes_expanded, len(frontier))
+            
             if state.is_goal():
                 return SearchResult(
                     path=path,
@@ -279,10 +388,14 @@ class SearchAlgorithms:
                     time_taken=time.time() - start_time,
                     memory_used=max_frontier_size,
                     success=True,
-                    algorithm_name="A*"
+                    algorithm_name="A*",
+                    explored_nodes=[s.robot_pos for s in explored],
+                    search_tree=search_tree
                 )
             
             for action, next_state in VacuumWorld.get_successors(state, grid_size):
+                if len(search_tree) < tree_node_limit:
+                    search_tree.append((state.robot_pos, action, next_state.robot_pos))
                 new_g = g + 1
                 if next_state not in explored or explored[next_state] > new_g:
                     counter += 1
@@ -290,7 +403,9 @@ class SearchAlgorithms:
                     heapq.heappush(frontier, (new_g + h, counter, new_g, next_state, path + [action]))
         
         return SearchResult([], nodes_expanded, time.time() - start_time, 
-                          max_frontier_size, False, "A*")
+                          max_frontier_size, False, "A*",
+                          explored_nodes=[s.robot_pos for s in explored],
+                          search_tree=search_tree)
 
 
 # Dict các thuật toán mặc định
@@ -300,4 +415,5 @@ DEFAULT_ALGORITHMS: Dict[str, Callable] = {
     "UCS": SearchAlgorithms.ucs,
     "Greedy": SearchAlgorithms.greedy,
     "A*": SearchAlgorithms.astar,
+    "Greedy NN": greedy_nearest_neighbor,
 }

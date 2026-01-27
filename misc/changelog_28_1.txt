@@ -1,0 +1,53 @@
+NHẬT KÝ THAY ĐỔI - VACUUM WORLD PROJECT
+=========================================
+
+PHIÊN BẢN: 2.0 (ỔN ĐỊNH)
+NGÀY CẬP NHẬT: 28/01/2026
+
+I. CÁC THÔNG SỐ KỸ THUẬT (CONFIG)
+---------------------------------
+Để đảm bảo hiệu năng và tránh treo máy trên các bản đồ lớn, các giới hạn sau đã được thiết lập trong `app/algorithms/search_algorithms.py`:
+
+1. Thời gian chờ tối đa (MAX_TIME_SECONDS): 15.0 giây
+   - Thuật toán sẽ tự dừng nếu vượt quá thời gian này để bảo vệ CPU.
+
+2. Số nút tối đa (MAX_NODES): 100,000 nút
+   - Giới hạn quy mô bộ nhớ cho Frontier và Explored set.
+
+3. Giới hạn hiển thị cây (tree_node_limit): 2,000 cạnh
+   - Dữ liệu cây được thu thập tối đa 2,000 bước đầu tiên để tối ưu hóa việc vẽ đồ họa.
+
+4. Giới hạn hiển thị sơ đồ (max_edges): 300 cạnh
+   - Sơ đồ cây hiển thị tối đa 300 nút trực quan nhất trên màn hình để đảm bảo độ rõ nét.
+
+II. CÁC CẬP NHẬT CHÍNH
+----------------------
+1. Nâng cấp Giao diện (GUI Overhaul):
+   - Mở rộng bảng phân tích bên phải lên 600 pixel.
+   - Nút hành động được làm mới và căn chỉnh chuyên nghiệp hơn.
+
+2. Sơ đồ Cây Tìm kiếm Phân cấp (Hierarchical Search Tree):
+   - Hiển thị trực quan quá trình "suy nghĩ" của thuật toán.
+   - Các nút (node) hiển thị tọa độ (x, y) rõ ràng.
+   - Các cạnh (edge) hiển thị chữ cái đại diện cho hành động (U, D, L, R, S).
+
+3. Theo dõi Bước Hiện tại (Live Step Tracking):
+   - Đường dẫn trong cây sẽ chuyển sang MÀU ĐỎ và ĐẬM hơn khi robot di chuyển qua bước đó.
+   - Nút hiện tại được làm nổi bật với vòng tròn đỏ giúp dễ dàng đối chiếu giữa cây logic và bản đồ thực tế.
+
+4. Cơ chế Đa luồng (Multi-threading):
+   - Quá trình tìm kiếm chạy ngầm, không gây đóng băng giao diện người dùng (UI).
+   - Hiển thị tiến độ real-time (Nodes Explored, Frontier Size).
+
+5. Tối ưu hóa Thuật toán:
+   - BFS, DFS, UCS, Greedy, A* đều đã được cập nhật để trả về dữ liệu cấu trúc cây.
+   - Thêm phương thức `get_state_path` trong core để tái tạo hành trình robot chính xác.
+
+III. SỬA LỖI (BUG FIXES)
+------------------------
+- Khắc phục lỗi AttributeError khi truy cập `get_state_path` trong GUI.
+- Sửa lỗi chồng lấn giữa các bảng thông tin trên màn hình nhỏ.
+- Tối ưu hóa việc vẽ lại (redraw) giúp tăng FPS khi hiển thị các cây lớn.
+- Sửa lỗi hiển thị font chữ và căn lề tọa độ trong các node.
+
+-----------------------------------------

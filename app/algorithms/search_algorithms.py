@@ -17,7 +17,7 @@ from app.core import VacuumWorld
 from .greedy_nn import greedy_nearest_neighbor
 
 # Limits for search-tree visualization
-TREE_EDGE_LIMIT = 8000
+TREE_EDGE_LIMIT = 20000
 
 # Performance limits to prevent infinite search on large boards
 MAX_TIME_SECONDS = 30.0  # Maximum time allowed for search

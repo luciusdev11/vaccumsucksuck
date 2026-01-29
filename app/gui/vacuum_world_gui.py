@@ -95,6 +95,7 @@ class VacuumWorldGUI:
         self.search_progress = SearchProgress()  # Progress tracking
         self.show_search_viz = True  # Toggle for search visualization
         self.search_initial_state: Optional[State] = None
+        self.tree_scroll_y = 0  # Scroll offset for tree diagram
         
         # Lưu vị trí bụi cố định để vẽ
         self.dirt_positions: Dict[Tuple[int, int], List[Tuple[int, int, int]]] = {}
@@ -133,9 +134,9 @@ class VacuumWorldGUI:
         num_algo = len(self.algorithm_names) if hasattr(self, 'algorithm_names') else 5
         sidebar_height = 50 + (4 * 30) + 10 + (num_algo * 30) + 10 + (4 * 30) + 40
         
-        self.window_width = grid_area + SIDEBAR_WIDTH + 600 + 100  # Even wider for massive tree
+        self.window_width = grid_area + SIDEBAR_WIDTH + 800 + 50
         self.window_height = max(grid_area + TOP_BAR_HEIGHT + BOTTOM_BAR_HEIGHT + 20, 
-                                sidebar_height + TOP_BAR_HEIGHT + 20)
+                                sidebar_height + TOP_BAR_HEIGHT + 20, 800) # Ensure a decent height
     
     def create_buttons(self):
         """Tạo tất cả các nút bấm"""
@@ -675,6 +676,14 @@ class VacuumWorldGUI:
             
             if event.type == pygame.KEYDOWN:
                 self.handle_keyboard(event.key)
+            
+            if event.type == pygame.MOUSEWHEEL:
+                # Scroll tree if mouse is over the progress panel
+                # Panel is on the right
+                sidebar_x = self.grid_offset_x + (self.world.grid_size * self.cell_size) + 15
+                panel_x = sidebar_x + SIDEBAR_WIDTH + 10
+                if pygame.mouse.get_pos()[0] > panel_x:
+                     self.tree_scroll_y = max(0, self.tree_scroll_y - event.y * 30)
         
         return True
     
@@ -753,6 +762,11 @@ class VacuumWorldGUI:
             if self.current_step >= len(self.solution_path):
                 self.show_message("Complete!")
                 self.auto_running = False
+            
+            # Auto-scroll tree to show the current step (fixed 90px per level)
+            panel_height = self.window_height - TOP_BAR_HEIGHT - 30
+            target_y = (self.current_step * 90) - (panel_height // 2) + 50
+            self.tree_scroll_y = max(0, target_y)
     
     def update(self):
         """Update state each frame"""
@@ -768,6 +782,7 @@ class VacuumWorldGUI:
             if self.search_result.success:
                 self.solution_path = self.search_result.path
                 self.current_step = 0
+                self.tree_scroll_y = 0 # Reset scroll on new search
                 # Pre-calculate robot positions on solution path for tree visualization
                 # We need the initial state of the search
                 state_path = self.world.get_state_path(self.solution_path, self.search_initial_state)
@@ -835,7 +850,7 @@ class VacuumWorldGUI:
         self.solve(algorithm_func)
         
     def draw_tree_diagram(self, x, y, width, height):
-        """Draw a hierarchical tree diagram focusing on the solution path window"""
+        """Draw a hierarchical tree diagram from Step 0 downwards"""
         if not self.search_result or not hasattr(self.search_result, 'search_tree'):
             return
             
@@ -843,132 +858,184 @@ class VacuumWorldGUI:
         if not edges:
             return
 
-        # Build children map from ALL edges
         full_children_map = defaultdict(list)
         for p, a, c in edges:
             full_children_map[p].append((a, c))
+
+        action_order = {
+            Action.LEFT: 0,
+            Action.UP: 1,
+            Action.SUCK: 2,
+            Action.DOWN: 3,
+            Action.RIGHT: 4
+        }
 
         if not hasattr(self, 'solution_states') or not self.solution_states or not self.solution_path:
             return
 
         n = len(self.solution_path)
+        
+        # Inject solution path edges manually to ensure the tree is never cut off
+        # even if the TREE_EDGE_LIMIT was reached by the algorithm.
+        for i in range(n):
+            s_p = self.solution_states[i]
+            s_c = self.solution_states[i+1]
+            act = self.solution_path[i]
+            # Add to map if not present
+            found = False
+            for a, succ in full_children_map.get(s_p, []):
+                if succ == s_c and a == act:
+                    found = True
+                    break
+            if not found:
+                full_children_map[s_p].append((act, s_c))
+
+        n = len(self.solution_path)
         k = getattr(self, 'current_step', 0)
         
-        # Window of path indices for States: Sk-3 to Sk+3
-        start_idx = max(0, k - 3)
-        end_idx = min(n, k + 3)
+        # Build levels for the ENTIRE path from Step 0
+        levels = [] 
         
-        levels = [] # List of lists of (State, is_on_path, action_from_parent)
+        # Level 0: Initial state (Step 0) - Center slot 2
+        levels.append([{
+            'state': self.solution_states[0],
+            'on_path': True,
+            'action': None,
+            'slot': 2
+        }])
         
-        # Level 0: solution_states[start_idx]
-        levels.append([(self.solution_states[start_idx], True, None)])
-        
-        for i in range(start_idx, end_idx):
+        for i in range(n):
             s_curr = self.solution_states[i]
-            s_next = self.solution_states[i+1]
+            s_path_next = self.solution_states[i+1] # The state chosen for the next step
+            path_action = self.solution_path[i] # The action leading to it
             
-            level_nodes = []
-            seen_successors = set()
-            
-            # Put path successor first
-            path_action = self.solution_path[i]
-            level_nodes.append((s_next, True, path_action))
-            seen_successors.add(s_next)
-            
-            # Add other successors (branches)
+            success_map = {}
+            # Group successors by their slot
             for action, successor in full_children_map.get(s_curr, []):
-                if successor not in seen_successors:
-                    level_nodes.append((successor, False, action))
-                    seen_successors.add(successor)
-            
-            # Limit branches per level to avoid clutter
-            if len(level_nodes) > 5:
-                level_nodes = level_nodes[:5]
+                slot = action_order.get(action, 2)
+                is_on_path = (action == path_action and successor == s_path_next)
                 
+                success_map[slot] = {
+                    'state': successor,
+                    'on_path': is_on_path,
+                    'action': action,
+                    'slot': slot
+                }
+            
+            # Sort level nodes by slot
+            level_nodes = [success_map[s] for s in sorted(success_map.keys())]
             levels.append(level_nodes)
 
         # Coordinate calculation
-        node_coords = {}
+        node_coords = {} # (depth, node_in_level_idx) -> (x, y)
         total_levels = len(levels)
-        if total_levels == 0: return
         
-        dy = height / (total_levels + 0.5)
+        dy = 90 # Reduced vertical spacing to see more nodes
+        node_radius = 17 # Slightly smaller
+        current_radius = 23 # Slightly smaller
+        
+        old_clip = self.screen.get_clip()
+        self.screen.set_clip(pygame.Rect(x, y, width, height))
+        
+        draw_y_start = y + 50 - self.tree_scroll_y
         
         for d, nodes in enumerate(levels):
-            node_y = y + dy * (d + 0.5)
-            spacing = width / (len(nodes) + 1)
-            for j, (state, on_path, action) in enumerate(nodes):
-                node_x = x + spacing * (j + 1)
-                node_coords[state] = (node_x, node_y)
+            node_y = draw_y_start + dy * d
+            slot_width = width / 6 # Divide width into 6 parts for 5 slots
+            
+            for j, node_data in enumerate(nodes):
+                slot = node_data['slot']
+                node_x = x + slot_width * (slot + 1)
+                node_coords[(d, j)] = (node_x, node_y)
 
-        # Draw "..." above start_idx if not root
-        if start_idx > 0:
-            root_state = self.solution_states[start_idx]
-            if root_state in node_coords:
-                cx, cy = node_coords[root_state]
-                pygame.draw.line(self.screen, COLORS['GRAY'], (cx, cy - 15), (cx, cy - 25), 1)
-                dot_text = self.font_small.render("...", True, COLORS['DARK_GRAY'])
-                self.screen.blit(dot_text, (cx - 5, cy - 40))
+        # Draw Depth Meter (Step Indicators) on the left
+        meter_x = x + 10
+        pygame.draw.line(self.screen, COLORS['GRAY'], (meter_x, y), (meter_x, y + height), 1)
+        
+        for d in range(total_levels):
+            node_y = draw_y_start + dy * d
+            # Only draw if visible
+            if y - 20 <= node_y <= y + height + 20:
+                # Tick mark
+                pygame.draw.line(self.screen, COLORS['GRAY'], (meter_x, node_y), (meter_x + 8, node_y), 1)
+                # Step text
+                is_active = (d == k)
+                color = COLORS['RED'] if is_active else COLORS['DARK_GRAY']
+                step_lbl = self.font_small.render(f"Step {d}", True, color)
+                self.screen.blit(step_lbl, (meter_x + 12, node_y - 8))
 
         # Draw edges
         for d in range(1, total_levels):
-            # Parent for level d is a node at level d-1. 
-            # In our case, every node at level d is a child of solution_states[start_idx + d - 1]
-            parent = self.solution_states[start_idx + d - 1]
-            if parent not in node_coords: continue
+            # Parent for level d is the 'on_path' node from level d-1
+            parent_idx = -1
+            for idx, nd in enumerate(levels[d-1]):
+                if nd['on_path']:
+                    parent_idx = idx
+                    break
             
-            for child, on_path, action in levels[d]:
-                if child not in node_coords: continue
+            if parent_idx == -1: continue # Should not happen
+            parent_coord = node_coords.get((d-1, parent_idx))
+            if not parent_coord: continue
+            
+            for j, node_data in enumerate(levels[d]):
+                child_coord = node_coords.get((d, j))
+                if not child_coord: continue
                 
-                is_current_edge = False
-                if k > 0 and k <= n:
-                    if parent == self.solution_states[k-1] and child == self.solution_states[k]:
-                        is_current_edge = True
+                # Visibility optimization
+                if parent_coord[1] < y - 50 and child_coord[1] < y - 50: continue
+                if parent_coord[1] > y + height + 50 and child_coord[1] > y + height + 50: continue
+
+                # Edge is "current" if it leads to the current step's target
+                is_current_edge = (d == k and node_data['on_path'] and k > 0)
                 
-                color = COLORS['RED'] if is_current_edge else (COLORS['BLUE'] if on_path else COLORS['GRAY'])
-                thickness = 4 if is_current_edge else (2 if on_path else 1)
+                color = COLORS['RED'] if is_current_edge else (COLORS['BLUE'] if node_data['on_path'] else COLORS['GRAY'])
+                thickness = 6 if is_current_edge else (3 if node_data['on_path'] else 1)
                 
-                pygame.draw.line(self.screen, color, node_coords[parent], node_coords[child], thickness)
+                pygame.draw.line(self.screen, color, parent_coord, child_coord, thickness)
                 
-                # Action label
-                mid_x = (node_coords[parent][0] + node_coords[child][0]) / 2
-                mid_y = (node_coords[parent][1] + node_coords[child][1]) / 2
-                act_str = action.name[0] if hasattr(action, 'name') else str(action)[0]
-                act_label = self.font_small.render(act_str, True, color)
-                self.screen.blit(act_label, (mid_x + 5, mid_y - 12))
+                # Action label - place near the child for better reading
+                mid_x = (parent_coord[0] + child_coord[0]) / 2 + 8
+                mid_y = (parent_coord[1] + child_coord[1]) / 2 - 10
+                act_str = node_data['action'].name if hasattr(node_data['action'], 'name') else str(node_data['action'])
+                if len(act_str) > 5: act_str = act_str[0]
+                
+                self.screen.blit(self.font_medium.render(act_str, True, color), (mid_x, mid_y))
 
         # Draw nodes
         for d, nodes in enumerate(levels):
-            for state, on_path, action in nodes:
-                coord = node_coords[state]
-                is_current = (state == self.solution_states[k])
+            for j, node_data in enumerate(nodes):
+                coord = node_coords[(d, j)]
+                if coord[1] < y - 50 or coord[1] > y + height + 50: continue
                 
-                radius = 16 if is_current else 13
+                state = node_data['state']
+                is_current = (d == k and node_data['on_path'])
+                on_path = node_data['on_path']
+                
+                radius = current_radius if is_current else node_radius
+                if is_current:
+                    pygame.draw.circle(self.screen, (255, 220, 220), coord, radius + 6)
+                
                 pygame.draw.circle(self.screen, COLORS['WHITE'], coord, radius)
                 
                 if is_current:
-                    pygame.draw.circle(self.screen, COLORS['RED'], coord, radius, 3)
+                    pygame.draw.circle(self.screen, COLORS['RED'], coord, radius, 4)
                 elif on_path:
-                    pygame.draw.circle(self.screen, COLORS['BLUE'], coord, radius, 2)
+                    pygame.draw.circle(self.screen, COLORS['BLUE'], coord, radius, 3)
                 else:
                     pygame.draw.circle(self.screen, COLORS['BLACK'], coord, radius, 1)
-                    # Branch cutoff "..."
                     if state in full_children_map and len(full_children_map[state]) > 0:
-                         dot_text = self.font_small.render("...", True, COLORS['DARK_GRAY'])
-                         self.screen.blit(dot_text, (coord[0] - 5, coord[1] + radius + 2))
+                         self.screen.blit(self.font_small.render("...", True, COLORS['DARK_GRAY']), (coord[0] - 5, coord[1] + radius + 2))
                 
                 label_text = f"{state.robot_pos[0]},{state.robot_pos[1]}"
-                label = self.font_small.render(label_text, True, COLORS['BLACK'])
-                label_rect = label.get_rect(center=coord)
-                self.screen.blit(label, label_rect)
+                font = self.font_medium if is_current else self.font_small
+                label = font.render(label_text, True, COLORS['BLACK'])
+                self.screen.blit(label, label.get_rect(center=coord))
 
-        # Draw "..." below last path node if not goal
-        if end_idx < n:
-            last_path_state = self.solution_states[end_idx]
-            if last_path_state in node_coords:
-                 cx, cy = node_coords[last_path_state]
-                 dot_text = self.font_small.render("...", True, COLORS['DARK_GRAY'])
-                 self.screen.blit(dot_text, (cx - 5, cy + 20))
+        self.screen.set_clip(old_clip)
+        
+        # Step counter overlay
+        step_text = self.font_medium.render(f"Step {k} / {n}", True, COLORS['BLUE'])
+        self.screen.blit(step_text, (x + 10, y + height - 30))
 
         
     def draw_search_tree(self):
@@ -993,9 +1060,9 @@ class VacuumWorldGUI:
         # Panel position (right side of sidebar)
         sidebar_x = self.grid_offset_x + (self.world.grid_size * self.cell_size) + 15
         panel_x = sidebar_x + SIDEBAR_WIDTH + 10
-        panel_y = TOP_BAR_HEIGHT + 20
-        panel_width = 600
-        panel_height = self.window_height - TOP_BAR_HEIGHT - BOTTOM_BAR_HEIGHT - 40
+        panel_y = TOP_BAR_HEIGHT + 10
+        panel_width = max(150, self.window_width - panel_x - 20)
+        panel_height = self.window_height - TOP_BAR_HEIGHT - 20 # Use almost entire height
         
         if panel_width < 150:
             return

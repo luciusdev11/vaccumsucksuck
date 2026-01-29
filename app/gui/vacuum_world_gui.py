@@ -17,6 +17,7 @@ from .config import (COLORS, MIN_CELL_SIZE, MAX_CELL_SIZE, SIDEBAR_WIDTH,
                      BUTTON_WIDTH, BUTTON_HEIGHT, BUTTON_SPACING)
 from .components import Button
 
+ASSET_ROBOT = "bong1.jpg"
 
 class VacuumWorldGUI:
     """
@@ -35,6 +36,7 @@ class VacuumWorldGUI:
     app.run()
     ```
     """
+    
     
     def __init__(self, 
                  grid_size: int = DEFAULT_GRID_SIZE,
@@ -292,7 +294,7 @@ class VacuumWorldGUI:
         try:
             # Đường dẫn đến hình ảnh
             base_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-            image_path = os.path.join(base_path, "assets", "vacuum.png")
+            image_path = os.path.join(base_path, "assets", ASSET_ROBOT)
             
             if os.path.exists(image_path):
                 self.robot_image = pygame.image.load(image_path).convert_alpha()
@@ -470,9 +472,9 @@ class VacuumWorldGUI:
                 # Check if it's a timeout or node limit
                 algo_name = self.search_result.algorithm_name
                 if "timeout" in algo_name:
-                    result_text = "Timeout after 15s" if info_width < 280 else f"Failed: Timeout after 15s ({self.search_result.nodes_expanded} nodes)"
+                    result_text = f"Timeout after 30s" if info_width < 280 else f"Failed: Timeout after 30s ({self.search_result.nodes_expanded} nodes)"
                 elif "node limit" in algo_name:
-                    result_text = "Node limit (100k)" if info_width < 280 else f"Failed: Node limit reached (100,000 nodes)"
+                    result_text = f"Node limit {self.search_result.nodes_expanded}" if info_width < 280 else f"Failed: Node limit reached {self.search_result.nodes_expanded} nodes"
                 else:
                     result_text = "Not found!" if info_width < 280 else "Path not found!"
                 color = COLORS['RED']

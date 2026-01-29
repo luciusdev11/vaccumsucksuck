@@ -3,8 +3,9 @@ Fast Greedy Nearest Neighbor algorithm for large boards
 """
 
 import time
-from typing import Set
+from typing import Set, List, Tuple
 from app.models import State, Action, SearchResult
+from app.core import VacuumWorld
 
 
 def greedy_nearest_neighbor(initial_state: State, grid_size: int, progress=None) -> SearchResult:
@@ -17,54 +18,72 @@ def greedy_nearest_neighbor(initial_state: State, grid_size: int, progress=None)
     """
     start_time = time.time()
     
-    current_pos = initial_state.robot_pos
+    current_state = initial_state
     remaining_dirt = set(initial_state.dirt_set)
     path = []
     nodes_expanded = 0
+    explored_nodes = []
+    search_tree = []
     
     while remaining_dirt:
         # Find nearest dirt using Manhattan distance
+        curr_x, curr_y = current_state.robot_pos
         nearest_dirt = None
         min_distance = float('inf')
         
         for dirt_pos in remaining_dirt:
-            distance = abs(current_pos[0] - dirt_pos[0]) + abs(current_pos[1] - dirt_pos[1])
+            distance = abs(curr_x - dirt_pos[0]) + abs(curr_y - dirt_pos[1])
             if distance < min_distance:
                 min_distance = distance
                 nearest_dirt = dirt_pos
         
         # Move to nearest dirt using simple Manhattan pathfinding
         target_x, target_y = nearest_dirt
-        curr_x, curr_y = current_pos
         
-        # Move horizontally first, then vertically
-        while curr_x != target_x:
-            if curr_x < target_x:
-                path.append(Action.RIGHT)
-                curr_x += 1
-            else:
-                path.append(Action.LEFT)
-                curr_x -= 1
+        # Helper to record a step
+        def record_step(action, next_s):
+            nonlocal current_state, nodes_expanded
+            # Add all possible actions to tree for visualization
+            for act, succ in VacuumWorld.get_successors(current_state, grid_size):
+                search_tree.append((current_state, act, succ))
+            
+            explored_nodes.append(current_state.robot_pos)
+            current_state = next_s
+            path.append(action)
             nodes_expanded += 1
+            if progress and nodes_expanded % 10 == 0:
+                progress.update(nodes_expanded, len(remaining_dirt))
+
+        # Move horizontally first
+        while current_state.robot_pos[0] != target_x:
+            cx, cy = current_state.robot_pos
+            if cx < target_x:
+                action = Action.RIGHT
+                next_pos = (cx + 1, cy)
+            else:
+                action = Action.LEFT
+                next_pos = (cx - 1, cy)
+            next_state = State(next_pos, current_state.dirt_set)
+            record_step(action, next_state)
         
-        while curr_y != target_y:
-            if curr_y < target_y:
-                path.append(Action.DOWN)
-                curr_y += 1
+        # Then move vertically
+        while current_state.robot_pos[1] != target_y:
+            cx, cy = current_state.robot_pos
+            if cy < target_y:
+                action = Action.DOWN
+                next_pos = (cx, cy + 1)
             else:
-                path.append(Action.UP)
-                curr_y -= 1
-            nodes_expanded += 1
+                action = Action.UP
+                next_pos = (cx, cy - 1)
+            next_state = State(next_pos, current_state.dirt_set)
+            record_step(action, next_state)
         
         # Suck the dirt
-        path.append(Action.SUCK)
-        nodes_expanded += 1
-        remaining_dirt.remove(nearest_dirt)
-        current_pos = (curr_x, curr_y)
+        new_dirt = set(current_state.dirt_set) - {current_state.robot_pos}
+        next_state = State(current_state.robot_pos, new_dirt)
+        record_step(Action.SUCK, next_state)
         
-        # Update progress
-        if progress:
-            progress.update(nodes_expanded, len(remaining_dirt))
+        remaining_dirt.discard(current_state.robot_pos)
     
     return SearchResult(
         path=path,
@@ -72,5 +91,7 @@ def greedy_nearest_neighbor(initial_state: State, grid_size: int, progress=None)
         time_taken=time.time() - start_time,
         memory_used=len(initial_state.dirt_set),
         success=True,
-        algorithm_name="Greedy NN"
+        algorithm_name="Greedy NN",
+        explored_nodes=explored_nodes,
+        search_tree=search_tree
     )

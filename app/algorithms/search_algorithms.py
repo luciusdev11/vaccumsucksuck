@@ -17,8 +17,8 @@ from app.core import VacuumWorld
 from .greedy_nn import greedy_nearest_neighbor
 
 # Performance limits to prevent infinite search on large boards
-MAX_TIME_SECONDS = 15.0  # Maximum time allowed for search
-MAX_NODES = 100000  # Maximum nodes to expand
+MAX_TIME_SECONDS = 30.0  # Maximum time allowed for search
+MAX_NODES = 1000000  # Maximum nodes to expand
 
 
 class SearchAlgorithms:

@@ -83,6 +83,8 @@ class VacuumWorldGUI:
         self.last_step_time = 0
         self.search_result: Optional[SearchResult] = None
         self.solution_positions: Set[Tuple[int, int]] = set() # Robot positions on solution path
+        self.solution_states: List[State] = [] # Sequence of states in solution
+
         
         # Threading state
         self.is_searching = False
@@ -766,10 +768,12 @@ class VacuumWorldGUI:
                 # Pre-calculate robot positions on solution path for tree visualization
                 # We need the initial state of the search, which is the current state
                 state_path = self.world.get_state_path(self.solution_path)
+                self.solution_states = state_path
                 self.solution_positions = {s.robot_pos for s in state_path}
                 self.show_message(f"Found path: {len(self.solution_path)} steps!")
             else:
                 self.solution_path = []
+                self.solution_states = []
                 self.solution_positions = set()
                 self.show_message("Path not found!")
         
@@ -896,10 +900,13 @@ class VacuumWorldGUI:
                 
                 # Check if this edge leads to the current robot position during playback
                 is_current_step = False
-                if self.solution_path and self.current_step > 0:
-                    state_path = self.world.get_state_path(self.solution_path[:self.current_step])
-                    if len(state_path) > 1 and state_path[-1].robot_pos == c and state_path[-2].robot_pos == p:
-                        is_current_step = True
+                if self.solution_path and self.current_step > 0 and self.solution_states:
+                    if self.current_step < len(self.solution_states):
+                        curr_pos = self.solution_states[self.current_step].robot_pos
+                        prev_pos = self.solution_states[self.current_step - 1].robot_pos
+                        
+                        if curr_pos == c and prev_pos == p:
+                            is_current_step = True
                 
                 start_pos = node_coords[p]
                 end_pos = node_coords[c]
@@ -918,12 +925,12 @@ class VacuumWorldGUI:
                 self.screen.blit(action_label, (mid_x + 6, mid_y - 12))
 
         # Re-draw active node in red if it exists
-        if self.solution_path and self.current_step >= 0:
-            state_path = self.world.get_state_path(self.solution_path[:self.current_step])
-            current_pos = state_path[-1].robot_pos
-            if current_pos in node_coords:
-                coord = node_coords[current_pos]
-                pygame.draw.circle(self.screen, COLORS['RED'], coord, 15, 3) # Red highlight ring
+        if self.solution_path and self.current_step >= 0 and self.solution_states:
+            if self.current_step < len(self.solution_states):
+                current_pos = self.solution_states[self.current_step].robot_pos
+                if current_pos in node_coords:
+                    coord = node_coords[current_pos]
+                    pygame.draw.circle(self.screen, COLORS['RED'], coord, 15, 3) # Red highlight ring
 
         
     def draw_search_tree(self):
